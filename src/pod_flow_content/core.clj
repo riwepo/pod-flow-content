@@ -2,11 +2,12 @@
   (:require [clj-http.client :as http]
             [clojure.data.xml :as xml]
             [clojure.java.io :as io]
-            [clojure.string :as str]
-            [config.core :refer [env]]))
+            [config.core :refer [env]]
+            [clojure.edn :as edn])
+  (:import (java.io PushbackReader)))
 
-(defn fetch-rss []
-  (let [rss-stream (:body (http/get (:rss-url env) {:as :stream}))
+(defn fetch-rss [url]
+  (let [rss-stream (:body (http/get url {:as :stream}))
         parsed (xml/parse (io/input-stream rss-stream))]
     (->> (xml-seq parsed)
          (filter #(= :item (:tag %))))))
@@ -17,55 +18,56 @@
                         (filter #(= tag (:tag %)))
                         first))
         title-el (find-tag :title)
-        enclosure-el (find-tag :enclosure)
         title (-> title-el :content first)
-        url (get-in enclosure-el [:attrs :url])]
-    {:title title
-     :url url}))
+        slug-el (find-tag :episodeUrl)
+        slug (-> slug-el :content first)
+        enclosure-el (find-tag :enclosure)
+        audio-url (get-in enclosure-el [:attrs :url])
+        image-el (find-tag :image)
+        image-url (get-in image-el [:attrs :href])]
+    {:title     title
+     :slug      slug
+     :audio-url audio-url
+     :image-url image-url}))
 
-(defn sanitize [s]
-  (-> s
-      (str/replace #"[^a-zA-Z0-9\- ]" "")
-      (str/replace #" " "_")))
 
-(defn download-mp3 [{:keys [title url]}]
-  (let [filename (str "downloads/" (sanitize title) ".mp3")]
-    (println "Downloading:" title)
+(defn download-mp3 [{:keys [slug url]}]
+  (let [filename (str "data/" slug ".mp3")]
+    (println "Downloading:" slug)
     (with-open [in (io/input-stream url)
                 out (io/output-stream filename)]
       (io/copy in out))
     (println "Saved to:" filename)))
 
-(defn run []
-  (doseq [item (fetch-rss)]
-    (-> item
-        extract-episode-info)))
-        ;download-mp3)))
+(defn rss->edn [filepath url]
+  (->> url
+      (fetch-rss)
+      (mapv extract-episode-info)
+      (pr-str)
+      (spit filepath)))
 
-(defn write-feed [feed] (with-open [w (clojure.java.io/writer "data/rss-feed.txt")]
-                          (doseq [line feed]
-                            (.write w (str line "\n")))))
+(defn read-edn-file [filepath]
+  (with-open [r (io/reader filepath)]
+    (edn/read (PushbackReader. r))))
+
+(defn read-episode-info [filepath slug]
+  (->> filepath
+    (read-edn-file)
+    (filter #(= slug (:slug %)))
+    (first)))
 
 (defn write-feed!
+  "dev utility function to see what the feed structure is like"
   [feed filepath]
   (with-open [w (io/writer filepath)]
     (doseq [el feed]
       (xml/emit el w)
-      (.write w "\n")))) ; optional newline between elements
+      (.write w "\n"))))                                    ; optional newline between elements
 
 (comment
-    (:rss-url env)
-    (write-feed! (fetch-rss) "data/rss-feed.txt")
-    (doseq [item (fetch-rss)]
-      (-> item
-          extract-episode-info))
-    (run)
-    (require '[config.core :refer [env]])
-    (println env)
-    (slurp "resources/config.edn")
-    (-> (fetch-rss) first prn)
-
-
-
-    nil)
+  (write-feed! (fetch-rss) "data/rss-feed.txt")
+  (rss->edn "data/rss-feed.edn" (:rss-url env))
+  (read-edn-file "data/rss-feed.edn")
+  (read-episode-info "data/rss-feed.edn" "mientras-preparamos-las-proximas-temporadas")
+  nil)
 
