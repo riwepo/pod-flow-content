@@ -1,1 +1,6 @@
-{:deps {}}
+{:paths ["src" "resources"]
+ :aliases
+  {:dev {:extra-paths ["resources"]}}
+ :deps {org.clojure/data.xml {:mvn/version "0.0.8"}
+        clj-http/clj-http {:mvn/version "3.13.1"}
+        yogthos/config {:mvn/version "1.2.1"}}}
